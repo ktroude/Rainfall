@@ -1,0 +1,53 @@
+Analyse avec ghidra:
+
+
+undefined4 main(undefined4 param_1,int param_2)
+
+{
+  undefined4 *puVar1;
+  void *pvVar2;
+  undefined4 *puVar3;
+  FILE *__stream;
+  
+  puVar1 = (undefined4 *)malloc(8);
+  *puVar1 = 1;
+  pvVar2 = malloc(8);
+  puVar1[1] = pvVar2;
+  puVar3 = (undefined4 *)malloc(8);
+  *puVar3 = 2;
+  pvVar2 = malloc(8);
+  puVar3[1] = pvVar2;
+  strcpy((char *)puVar1[1],*(char **)(param_2 + 4));
+  strcpy((char *)puVar3[1],*(char **)(param_2 + 8));
+  __stream = fopen("/home/user/level8/.pass","r");
+  fgets(c,0x44,__stream);
+  puts("~~");
+  return 0;
+}
+
+level7@RainFall:~$ objdump -R ./level7 
+
+./level7:     file format elf32-i386
+
+DYNAMIC RELOCATION RECORDS
+OFFSET   TYPE              VALUE 
+08049904 R_386_GLOB_DAT    __gmon_start__
+08049914 R_386_JUMP_SLOT   printf
+08049918 R_386_JUMP_SLOT   fgets
+0804991c R_386_JUMP_SLOT   time
+08049920 R_386_JUMP_SLOT   strcpy
+08049924 R_386_JUMP_SLOT   malloc
+08049928 R_386_JUMP_SLOT   puts
+0804992c R_386_JUMP_SLOT   __gmon_start__
+08049930 R_386_JUMP_SLOT   __libc_start_main
+08049934 R_386_JUMP_SLOT   fopen
+
+
+Objectif:
+la globale c contient le flag grace a cette ligne:
+
+  fgets(c,0x44,__stream);
+
+
+On voit que les mallocs ne font que 8 de long, mais on a pas de verification dans les deux strcpy
+On peut donc essayer de rediriger le ret vers la fonction printf avec c comme variable de printf?
